@@ -1,0 +1,40 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 项目表，存储每个参赛项目的核心信息
+model Project {
+  id                  String      @id @default(uuid()) // 项目唯一标识，UUID
+  name                String      // 项目名称
+  status              String      // 项目状态（如 submitted、draft 等）
+  description         String      // 项目简要描述
+  detailedDescription String      // 项目详细描述
+  tracks              String[]    // 参赛赛道，字符串数组
+  qa                  Json[]      // 项目问答，JSON 数组格式，包含 question/answer
+  technology          Json        // 技术栈，JSON 格式，包含前端、AI、工具等
+  links               Json[]      // 外部链接，JSON 数组格式，包含 GitHub、体验链接等
+  metadata            Json        // 元数据，JSON 格式，包含大设备、提交状态等
+  createdAt           DateTime    @default(now()) // 创建时间
+  updatedAt           DateTime    @updatedAt      // 更新时间
+}
+
+
+/// 团队成员表，存储每个项目的团队成员信息
+model TeamMember {
+  id        String   @id @default(uuid()) // 团队成员唯一标识，UUID
+  projectId String   // 外键，关联 Project 表
+  email     String   // 团队成员邮箱
+  role      String   // 团队成员角色
+}
