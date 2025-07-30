@@ -4,11 +4,10 @@ import { Prisma } from '@prisma/client';
 
 // 搜索项目信息的接口类型
 interface SearchResult {
-    projects: any[];
+    list: any[];
     total: number;
     page: number;
-    limit: number;
-    totalPages: number;
+    pageSize: number;
 }
 
 export const searchProjectInfoService = async (
@@ -84,9 +83,6 @@ export const searchProjectInfoService = async (
             })
         ]);
 
-        // 计算总页数
-        const totalPages = Math.ceil(total / limit);
-
         // 处理返回数据，只保留必要字段
         const filteredProjects = projects.map(project => ({
             id: project.id,
@@ -99,11 +95,10 @@ export const searchProjectInfoService = async (
         }));
 
         return {
-            projects: filteredProjects,
+            list: filteredProjects,
             total,
             page,
-            limit,
-            totalPages
+            pageSize: limit
         };
     } catch (error) {
         console.error('搜索服务错误:', error);
@@ -299,11 +294,10 @@ export const advancedSearchProjectService = async (
         }));
 
         return {
-            projects: filteredProjects,
+            list: filteredProjects,
             total,
             page,
-            limit,
-            totalPages
+            pageSize: limit
         };
     } catch (error) {
         console.error('高级搜索服务错误:', error);
