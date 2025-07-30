@@ -8,3 +8,8 @@ npx prisma generate
 ```bash
 pnpm migrate
 ```
+
+# 测试
+```
+npx ts-node src/tests/supabase_test.ts
+```
