@@ -42,6 +42,7 @@ export const getBaseInfoListService = async (page: number = 1, pageSize: number 
     }
 };
 
+
 export const getBaseInfoByIdService = async (id: string) => {
     try {
         const project = await db_client.project.findUnique({

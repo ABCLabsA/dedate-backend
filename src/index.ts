@@ -8,8 +8,8 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use(errorHandler);
 app.use('/api', router);
+app.use(errorHandler); // 错误处理中间件必须在所有路由之后
 
 
 const PORT = process.env.SERVER_PORT || 8002;

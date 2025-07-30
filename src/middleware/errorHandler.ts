@@ -6,7 +6,6 @@ import { ServiceError } from '../errors/ServiceError';
 // 全局异常处理器中间件
 export function errorHandler(err: any, req: Request, res: Response, next: NextFunction) {
   if (err instanceof ServiceError) {
-    logger.info("this!!!!")
     res.status(err.status).json({
       code: err.code ?? err.status, // 优先返回业务码
       message: err.message
