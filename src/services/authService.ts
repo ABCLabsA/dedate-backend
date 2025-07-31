@@ -9,18 +9,18 @@ export const authRegisterLoginService = async (email: string, password: string) 
   try {
     // 参数验证
     if (!email || !password) {
-      throw new ServiceError("邮箱和密码不能为空", 400, 1001);
+      throw new ServiceError("邮箱和密码不能为空", 200, 1001);
     }
 
     // 邮箱格式验证
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      throw new ServiceError("邮箱格式不正确", 400, 1002);
+      throw new ServiceError("邮箱格式不正确", 200, 1002);
     }
 
     // 密码强度验证
     if (password.length < 6) {
-      throw new ServiceError("密码长度不能少于6位", 400, 1003);
+      throw new ServiceError("密码长度不能少于6位", 200, 1003);
     }
 
 
@@ -59,7 +59,7 @@ export const authRegisterLoginService = async (email: string, password: string) 
       });
 
       if (resendError) {
-        throw new ServiceError("重新发送确认邮件失败: " + resendError.message, 400);
+        throw new ServiceError("重新发送确认邮件失败: " + resendError.message, 200, 1004);
       }
 
       return {
@@ -82,7 +82,7 @@ export const authRegisterLoginService = async (email: string, password: string) 
       });
 
       if (registerError) {
-        throw new ServiceError(registerError.message, 400, 1005);
+        throw new ServiceError(registerError.message, 200, 1005);
       }
 
       // console.log('registerData', registerData);
@@ -90,21 +90,26 @@ export const authRegisterLoginService = async (email: string, password: string) 
 
       // 检查注册结果
       if (registerData.user) {
-        // 用户已经激活账号，但是密码错误
-        if (!registerData.user.confirmed_at) {
+        // 检查用户创建时间，如果创建时间与当前时间相差很小，说明是新注册
+        const now = new Date();
+        const createdAt = new Date(registerData.user.created_at);
+        const timeDiff = Math.abs(now.getTime() - createdAt.getTime());
+        
+        // 如果时间差小于3秒且用户未确认，说明是新注册的用户
+        if (timeDiff < 3000 && !registerData.user.confirmed_at) {
+          return {
+            code: 200,
+            message: "注册成功，请查收邮件确认邮箱地址",
+            data: {
+              email_confirmed: false,
+              isNewUser: true,
+              needsEmailConfirmation: true
+            }
+          };
+        } else {
+          // 如果时间差较大或用户已确认，说明用户已存在但密码错误
           throw new ServiceError("密码错误，请重新检查您的密码", 200, 1006);
         }
-
-        // 新用户注册成功，需要邮箱确认
-        return {
-          code: 200,
-          message: "注册成功，请查收邮件确认邮箱地址",
-          data: {
-            email_confirmed: false,
-            isNewUser: true,
-            needsEmailConfirmation: true
-          }
-        };
       }
     }
 
