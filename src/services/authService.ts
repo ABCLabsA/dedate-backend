@@ -30,12 +30,11 @@ export const authRegisterLoginService = async (email: string, password: string) 
       password
     });
 
+    // console.log('loginData', loginData);
+    // console.log('loginError', loginError);
+
     // 如果登录成功，说明用户已存在且密码正确
     if (loginData.user && !loginError) {
-      // 检查邮箱是否已确认
-      if (!loginData.user.email_confirmed_at) {
-        throw new ServiceError("请先确认您的邮箱地址", 403, 1004);
-      }
 
       return {
         code: 200,
@@ -50,32 +49,6 @@ export const authRegisterLoginService = async (email: string, password: string) 
           }
         }
       };
-    }
-
-    // 如果登录失败且是"Invalid login credentials"错误，说明用户不存在，需要注册
-    if (loginError && loginError.message.includes('Invalid login credentials')) {
-      // 尝试注册新用户
-      const { data: registerData, error: registerError } = await supabase.auth.signUp({
-        email,
-        password
-      });
-
-      if (registerError) {
-        throw new ServiceError(registerError.message, 400, 1005);
-      }
-
-      // 检查是否需要邮箱确认
-      if (registerData.user && !registerData.user.email_confirmed_at) {
-        return {
-          code: 200,
-          message: "注册成功，请查收邮件确认邮箱地址",
-          data: {
-            email_confirmed: false,
-            isNewUser: true,
-            needsEmailConfirmation: true
-          }
-        };
-      }
     }
 
     // 未确认，重新再次发送邮件并提醒用户
@@ -98,6 +71,41 @@ export const authRegisterLoginService = async (email: string, password: string) 
           needsEmailConfirmation: true
         }
       };
+    }
+
+    // 如果登录失败且是"Invalid login credentials"错误，说明用户不存在，需要注册
+    if (loginError && loginError.message.includes('Invalid login credentials')) {
+      // 尝试注册新用户
+      const { data: registerData, error: registerError } = await supabase.auth.signUp({
+        email,
+        password
+      });
+
+      if (registerError) {
+        throw new ServiceError(registerError.message, 400, 1005);
+      }
+
+      // console.log('registerData', registerData);
+      // console.log('registerError', registerError);
+
+      // 检查注册结果
+      if (registerData.user) {
+        // 用户已经激活账号，但是密码错误
+        if (!registerData.user.confirmed_at) {
+          throw new ServiceError("密码错误，请重新检查您的密码", 200, 1006);
+        }
+
+        // 新用户注册成功，需要邮箱确认
+        return {
+          code: 200,
+          message: "注册成功，请查收邮件确认邮箱地址",
+          data: {
+            email_confirmed: false,
+            isNewUser: true,
+            needsEmailConfirmation: true
+          }
+        };
+      }
     }
 
     // 其他登录错误
