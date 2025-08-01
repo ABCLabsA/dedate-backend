@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import supabase from "../extensions/ext_auth"
 import { authRegisterLoginService } from "../services/authService";
-import { ServiceError } from "../errors/ServiceError";
 
 
 /**
