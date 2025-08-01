@@ -1,5 +1,5 @@
 import { ServiceError } from "../errors/ServiceError";
-import supabase from "../extensions/ext_auth";
+import supabase, { supabaseAdmin } from "../extensions/ext_auth";
 
 /**
  * 统一的注册/登录服务
@@ -23,19 +23,14 @@ export const authRegisterLoginService = async (email: string, password: string) 
       throw new ServiceError("密码长度不能少于6位", 200, 1003);
     }
 
-
     // 先尝试登录，检查用户是否已存在
     const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
       email,
       password
     });
 
-    // console.log('loginData', loginData);
-    // console.log('loginError', loginError);
-
     // 如果登录成功，说明用户已存在且密码正确
     if (loginData.user && !loginError) {
-
       return {
         code: 200,
         message: "登录成功",
@@ -73,30 +68,30 @@ export const authRegisterLoginService = async (email: string, password: string) 
       };
     }
 
-    // 如果登录失败且是"Invalid login credentials"错误，说明用户不存在，需要注册
+    // 如果登录失败且是"Invalid login credentials"错误，需要进一步判断
     if (loginError && loginError.message.includes('Invalid login credentials')) {
-      // 尝试注册新用户
-      const { data: registerData, error: registerError } = await supabase.auth.signUp({
-        email,
-        password
-      });
-
-      if (registerError) {
-        throw new ServiceError(registerError.message, 200, 1005);
+      // 使用 supabaseAdmin 查询用户表，检查用户是否存在
+      const { data: users, error: userQueryError } = await supabaseAdmin.auth.admin.listUsers();
+      
+      if (userQueryError) {
+        throw new ServiceError("查询用户信息失败: " + userQueryError.message, 500);
       }
 
-      // console.log('registerData', registerData);
-      // console.log('registerError', registerError);
+      // 检查用户是否存在于用户表中
+      const existingUser = users.users.find(user => user.email === email);
+      
+      if (existingUser) {
+        // 用户存在，说明是密码错误
+        throw new ServiceError("用户已存在，密码错误，请检查密码", 200, 1005);
+      } else {
+        // 用户不存在，尝试注册新用户
+        const { data: registerData, error: registerError } = await supabase.auth.signUp({
+          email,
+          password
+        });
 
-      // 检查注册结果
-      if (registerData.user) {
-        // 检查用户创建时间，如果创建时间与当前时间相差很小，说明是新注册
-        const now = new Date();
-        const createdAt = new Date(registerData.user.created_at);
-        const timeDiff = Math.abs(now.getTime() - createdAt.getTime());
-        
-        // 如果时间差小于3秒且用户未确认，说明是新注册的用户
-        if (timeDiff < 3000 && !registerData.user.confirmed_at) {
+        // 如果注册成功，说明用户确实不存在
+        if (registerData.user && !registerError) {
           return {
             code: 200,
             message: "注册成功，请查收邮件确认邮箱地址",
@@ -106,9 +101,11 @@ export const authRegisterLoginService = async (email: string, password: string) 
               needsEmailConfirmation: true
             }
           };
-        } else {
-          // 如果时间差较大或用户已确认，说明用户已存在但密码错误
-          throw new ServiceError("密码错误，请重新检查您的密码", 200, 1006);
+        }
+
+        // 如果注册失败，可能是其他原因
+        if (registerError) {
+          throw new ServiceError("注册失败: " + registerError.message, 200, 1006);
         }
       }
     }
