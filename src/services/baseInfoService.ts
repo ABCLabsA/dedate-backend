@@ -4,6 +4,8 @@ import db_client from "../extensions/ext_db";
 
 export const getBaseInfoListService = async (page: number = 1, pageSize: number = 10) => {
     try {
+        console.log("page", page)
+        console.log("pageSize", pageSize)
         const skip = (page - 1) * pageSize;
         const [list, total] = await Promise.all([
             db_client.project.findMany({
@@ -21,6 +23,7 @@ export const getBaseInfoListService = async (page: number = 1, pageSize: number 
             }),
             db_client.project.count(),
         ]);
+
         // 只保留 metadata 里的 booth 字段
         const filteredList = list.map(item => ({
             id: item.id,
@@ -36,7 +39,13 @@ export const getBaseInfoListService = async (page: number = 1, pageSize: number 
             page,
             pageSize,
         };
-    } catch (err) {
+    } catch (err: any) {
+        console.error("数据库错误详情:", {
+            message: err.message,
+            code: err.code,
+            meta: err.meta,
+            stack: err.stack
+        });
         logger.error("获取项目列表失败", err);
         throw new ServiceError("获取项目列表失败");
     }
