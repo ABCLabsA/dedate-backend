@@ -5,6 +5,6 @@ import { requireAuth } from "../middleware/auth";
 const baseInfoRouter = Router();
 
 baseInfoRouter.get('/list', getBaseInfoList)
-baseInfoRouter.get('/:id', requireAuth, getBaseInfoById)
+baseInfoRouter.get('/:id', getBaseInfoById)
 
 export default baseInfoRouter

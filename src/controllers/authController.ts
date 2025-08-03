@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import supabase from "../extensions/ext_auth"
-import { authRegisterLoginService } from "../services/authService";
+import { authRegisterLoginService, refreshTokenService } from "../services/authService";
 
 
 /**
@@ -18,6 +18,18 @@ export const registerLogin = async (req: Request, res: Response) => {
     message: result.message,
     data: result.data
   });
+};
+
+/**
+ * 刷新访问令牌
+ */
+export const refreshToken = async (req: Request, res: Response) => {
+  const { refresh_token } = req.body;
+
+    // 调用服务层处理刷新令牌逻辑
+    const result = await refreshTokenService(refresh_token);
+    
+    return res.status(200).json(result);
 };
 
 
@@ -101,56 +113,6 @@ export const logout = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('登出失败:', error);
-    return res.status(500).json({
-      code: 500,
-      message: "服务器内部错误",
-      data: null
-    });
-  }
-};
-
-/**
- * 刷新访问令牌
- */
-export const refreshToken = async (req: Request, res: Response) => {
-  try {
-    const { refresh_token } = req.body;
-
-    if (!refresh_token) {
-      return res.status(400).json({
-        code: 400,
-        message: "刷新令牌不能为空",
-        data: null
-      });
-    }
-
-    // 调用 Supabase 刷新令牌
-    const { data, error } = await supabase.auth.refreshSession({
-      refresh_token
-    });
-
-    if (error) {
-      return res.status(401).json({
-        code: 401,
-        message: error.message,
-        data: null
-      });
-    }
-
-    return res.status(200).json({
-      code: 200,
-      message: "令牌刷新成功",
-      data: {
-        session: {
-          access_token: data.session?.access_token,
-          refresh_token: data.session?.refresh_token,
-          expires_at: data.session?.expires_at
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('刷新令牌失败:', error);
     return res.status(500).json({
       code: 500,
       message: "服务器内部错误",
