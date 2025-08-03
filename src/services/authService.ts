@@ -122,3 +122,46 @@ export const authRegisterLoginService = async (email: string, password: string) 
     throw new ServiceError("认证失败", 500);
   }
 };
+
+/**
+ * 刷新访问令牌服务
+ */
+export const refreshTokenService = async (refresh_token: string) => {
+  try {
+    // 参数验证
+    if (!refresh_token) {
+      throw new ServiceError("刷新令牌不能为空", 401);
+    }
+
+    // 调用 Supabase 刷新令牌
+    const { data, error } = await supabase.auth.refreshSession({
+      refresh_token
+    });
+
+    if (error) {
+      throw new ServiceError(error.message, 401);
+    }
+
+    return {
+      code: 200,
+      message: "令牌刷新成功",
+      data: {
+        session: {
+          access_token: data.session?.access_token,
+          refresh_token: data.session?.refresh_token,
+          expires_at: data.session?.expires_at
+        }
+      }
+    };
+
+  } catch (error) {
+    // 如果是 ServiceError，直接抛出
+    if (error instanceof ServiceError) {
+      throw error;
+    }
+
+    throw new ServiceError("刷新令牌失败", 500);
+  }
+};
+
+
