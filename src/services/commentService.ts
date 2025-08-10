@@ -1,4 +1,3 @@
-import { supabaseAdmin } from "../extensions/ext_auth";
 import db_client from "../extensions/ext_db";
 import logger from "../extensions/ext_logger";
 import { 
@@ -16,20 +15,19 @@ import { generateRandomName } from "../utils/userUtils";
  * @param userId 用户ID
  */
 async function fetchUserBrief(userId: string): Promise<UserBriefDTO> {
-  // supabase 获取用户信息
+  // 获取用户信息
   try {
-    const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
-    if (error) {
-      throw new Error('获取用户信息失败');
+    const user = await db_client.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new Error('用户不存在');
     }
-    const user = data.user;
     return {
       id: user.id,
-      name: user.user_metadata.display_name,
-      avatar: user.user_metadata.avatar
+      name: user.name,
+      avatar: user.avatar
     };
   } catch (error) {
-    logger.error('获取用户信息失败, 直接返回', error);
+    logger.error('获取用户信息失败, 直接返回随机用户信息', error);
     return {
       id: userId,
       name: generateRandomName(userId),
@@ -86,36 +84,40 @@ export async function createCommentService(
     throw new Error('项目不存在');
   }
 
-  // 顶层评论逻辑
+  // 顶层评论逻辑 - 直接插入，不等待事务
   if (!parentId && !rootId) {
-    const created = await db_client.$transaction(async (tx) => {
-      // 1. 创建评论记录
-      const comment = await tx.comment.create({
-        data: {
-          projectId,
-          userId: authorUserId,
-          content,
-          parentId: null,
-          rootId: null,
-          replyToId: null
-        }
-      });
-
-      // 2. 更新 rootId 为自己的 id
-      const updated = await tx.comment.update({
-        where: { id: comment.id },
-        data: { rootId: comment.id }
-      });
-
-      return updated;
+    const comment = await db_client.comment.create({
+      data: {
+        projectId,
+        userId: authorUserId,
+        content,
+        parentId: null,
+        rootId: null, // 先设为 null
+        replyToId: null
+      }
     });
 
-    // 3. 获取用户信息并返回DTO
-    const user = await fetchUserBrief(created.userId);
-    return mapToCommentDTO(created, user, null);
+    // 立即返回，不等待 rootId 更新
+    const user = await fetchUserBrief(comment.userId);
+    const result = mapToCommentDTO(comment, user, null);
+    
+    // 异步更新 rootId，不影响响应时间
+    process.nextTick(async () => {
+      try {
+        await db_client.comment.update({
+          where: { id: comment.id },
+          data: { rootId: comment.id }
+        });
+      } catch (error) {
+        logger.error('异步更新 rootId 失败', error);
+        // 可以加入重试机制
+      }
+    });
+
+    return result;
   }
 
-  // 回复评论逻辑
+  // 回复评论逻辑 - 直接插入，不等待计数更新
   if (parentId && rootId) {
     // 验证父评论和根评论
     const [rootComment, parentComment] = await Promise.all([
@@ -152,37 +154,37 @@ export async function createCommentService(
       replyToUser = await fetchUserBrief(replyToComment.userId);
     }
 
-    const created = await db_client.$transaction(async (tx) => {
-      // 1. 创建回复评论
-      const comment = await tx.comment.create({
-        data: {
-          projectId,
-          userId: authorUserId,
-          content,
-          parentId,
-          rootId,
-          replyToId: replyToId || null
-        }
-      });
-
-      // 2. 递增根评论的回复计数（整个线程的回复总数）
-      await tx.comment.update({
-        where: { id: rootId },
-        data: { repliesCount: { increment: 1 } }
-      });
-
-      // 注意：不再递增直接父评论的 repliesCount
-      // 因为 repliesCount 表示整个线程的回复数量，不是直接回复数量
-
-      return comment;
+    const comment = await db_client.comment.create({
+      data: {
+        projectId,
+        userId: authorUserId,
+        content,
+        parentId,
+        rootId,
+        replyToId: replyToId || null
+      }
     });
 
-    // 4. 获取用户信息并返回DTO
-    const author = await fetchUserBrief(created.userId);
-    return mapToCommentDTO(created, author, replyToUser);
+    // 立即返回，不等待计数更新
+    const author = await fetchUserBrief(comment.userId);
+    const result = mapToCommentDTO(comment, author, replyToUser);
+    
+    // 异步更新计数，不影响响应时间
+    process.nextTick(async () => {
+      try {
+        await db_client.comment.update({
+          where: { id: rootId },
+          data: { repliesCount: { increment: 1 } }
+        });
+      } catch (error) {
+        logger.error('异步更新回复计数失败', error);
+      }
+    });
+
+    return result;
   }
 
-  throw new Error('评论参数无效：顶级评论不能指定 parentId/rootId，回复评论必须同时提供 parentId 和 rootId');
+  throw new Error('评论参数无效');
 }
 
 
