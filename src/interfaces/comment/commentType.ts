@@ -31,14 +31,6 @@ export interface CreateCommentPayload {
   replyToId: string | null;
 }
 
-// 查询参数类型
-export interface ThreadsQuery {
-  limit: number;
-  cursor?: string; // 格式：createdAt|id
-  repliesLimit: number;
-  currentUserId: string | null;
-}
-
 export interface RepliesQuery {
   limit: number;
   cursor?: string;

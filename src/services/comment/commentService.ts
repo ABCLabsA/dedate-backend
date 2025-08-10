@@ -4,47 +4,48 @@ import {
   CreateCommentPayload, 
   CommentDTO, 
   UserBriefDTO,
-  ThreadsQuery,
   RepliesQuery
 } from "../../interfaces/comment/commentType";
 import { generateRandomName } from "../../utils/userUtils";
-import { CommentCacheService } from "./commentCacheService";
-import { DB_SELECT_FIELDS } from "../../utils/constants";
+import { PerformanceMonitor } from "../../utils/performanceMonitor";
+
+// 内存缓存（避免Redis网络延迟）
+const memoryCache = {
+  users: new Map<string, { data: UserBriefDTO; timestamp: number }>(),
+  projects: new Map<string, { data: boolean; timestamp: number }>(),
+  maxAge: 5 * 60 * 1000, // 5分钟
+};
 
 /**
- * 获取用户简要信息（带缓存）
- * @param userId 用户ID
+ * 获取用户信息（内存缓存 + 批量查询）
  */
 async function fetchUserBrief(userId: string): Promise<UserBriefDTO> {
-  // 先检查缓存
-  const cached = await CommentCacheService.getUserCache(userId);
-  if (cached) {
-    return cached;
+  const now = Date.now();
+  const cached = memoryCache.users.get(userId);
+  
+  // 检查内存缓存
+  if (cached && (now - cached.timestamp) < memoryCache.maxAge) {
+    return cached.data;
   }
 
-  // 缓存未命中，查询数据库
   try {
     const user = await db_client.user.findUnique({ 
       where: { id: userId },
-      select: DB_SELECT_FIELDS.USER_BRIEF
+      select: { id: true, name: true, avatar: true }
     });
     
     if (!user) {
       throw new Error('用户不存在');
     }
     
-    const userBrief = {
-      id: user.id,
-      name: user.name,
-      avatar: user.avatar
-    };
+    const userBrief = { id: user.id, name: user.name, avatar: user.avatar };
     
-    // 设置缓存
-    await CommentCacheService.setUserCache(userId, userBrief);
+    // 更新内存缓存
+    memoryCache.users.set(userId, { data: userBrief, timestamp: now });
     
     return userBrief;
   } catch (error) {
-    logger.error('获取用户信息失败, 直接返回随机用户信息', error);
+    logger.error('获取用户信息失败', error);
     
     // 返回fallback用户信息
     const fallbackUser = {
@@ -54,34 +55,96 @@ async function fetchUserBrief(userId: string): Promise<UserBriefDTO> {
     };
     
     // 缓存fallback信息
-    await CommentCacheService.setUserCache(userId, fallbackUser);
+    memoryCache.users.set(userId, { data: fallbackUser, timestamp: now });
     
     return fallbackUser;
   }
 }
 
 /**
- * 快速验证项目是否存在（带缓存）
- * @param projectId 项目ID
+ * 批量获取用户信息（减少数据库查询）
+ */
+async function fetchUsersBatch(userIds: string[]): Promise<Map<string, UserBriefDTO>> {
+  const now = Date.now();
+  const result = new Map<string, UserBriefDTO>();
+  const missingIds: string[] = [];
+  
+  // 先检查缓存
+  for (const userId of userIds) {
+    const cached = memoryCache.users.get(userId);
+    if (cached && (now - cached.timestamp) < memoryCache.maxAge) {
+      result.set(userId, cached.data);
+    } else {
+      missingIds.push(userId);
+    }
+  }
+  
+  // 批量查询缺失的用户
+  if (missingIds.length > 0) {
+    try {
+      const users = await db_client.user.findMany({
+        where: { id: { in: missingIds } },
+        select: { id: true, name: true, avatar: true }
+      });
+      
+      for (const user of users) {
+        const userBrief = { id: user.id, name: user.name, avatar: user.avatar };
+        result.set(user.id, userBrief);
+        memoryCache.users.set(user.id, { data: userBrief, timestamp: now });
+      }
+      
+      // 为缺失的用户创建fallback
+      for (const userId of missingIds) {
+        if (!result.has(userId)) {
+          const fallbackUser = {
+            id: userId,
+            name: generateRandomName(userId),
+            avatar: `https://api.multiavatar.com/${userId}.svg`
+          };
+          result.set(userId, fallbackUser);
+          memoryCache.users.set(userId, { data: fallbackUser, timestamp: now });
+        }
+      }
+    } catch (error) {
+      logger.error('批量获取用户信息失败', error);
+      
+      // 为所有缺失用户创建fallback
+      for (const userId of missingIds) {
+        if (!result.has(userId)) {
+          const fallbackUser = {
+            id: userId,
+            name: generateRandomName(userId),
+            avatar: `https://api.multiavatar.com/${userId}.svg`
+          };
+          result.set(userId, fallbackUser);
+          memoryCache.users.set(userId, { data: fallbackUser, timestamp: now });
+        }
+      }
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * 快速验证项目（内存缓存）
  */
 async function validateProjectFast(projectId: string): Promise<boolean> {
-  // 先检查缓存
-  const cached = await CommentCacheService.getProjectCache(projectId);
-  if (cached !== null) {
-    return cached;
+  const now = Date.now();
+  const cached = memoryCache.projects.get(projectId);
+  
+  if (cached && (now - cached.timestamp) < memoryCache.maxAge) {
+    return cached.data;
   }
 
-  // 缓存未命中，查询数据库
   try {
-    const project = await db_client.project.findUnique({ 
+    const project = await db_client.project.findUnique({
       where: { id: projectId },
-      select: DB_SELECT_FIELDS.PROJECT_BASIC
+      select: { id: true }
     });
     
     const exists = !!project;
-    
-    // 设置缓存
-    await CommentCacheService.setProjectCache(projectId, exists);
+    memoryCache.projects.set(projectId, { data: exists, timestamp: now });
     
     return exists;
   } catch (error) {
@@ -92,9 +155,6 @@ async function validateProjectFast(projectId: string): Promise<boolean> {
 
 /**
  * 将数据库评论对象转换为DTO
- * @param comment 数据库评论对象
- * @param user 用户信息
- * @param replyUser 被回复用户信息
  */
 function mapToCommentDTO(
   comment: any,
@@ -119,149 +179,252 @@ function mapToCommentDTO(
   };
 }
 
-
 /**
- * 创建评论（优化版本）
- * @param projectId 项目ID
- * @param authorUserId 作者用户ID
- * @param payload 评论内容
+ * 创建评论（高性能版本）
  */
 export async function createCommentService(
   projectId: string,
   authorUserId: string,
   payload: CreateCommentPayload
 ): Promise<CommentDTO> {
-  const { content, parentId, rootId, replyToId } = payload;
+  const timerId = PerformanceMonitor.startTimer('createComment');
+  
+  try {
+    const { content, parentId, rootId, replyToId } = payload;
 
-  // 并行执行项目验证和用户信息获取
-  const [projectExists, authorUser] = await Promise.all([
-    validateProjectFast(projectId),
-    fetchUserBrief(authorUserId)
-  ]);
-
-  if (!projectExists) {
-    throw new Error('项目不存在');
-  }
-
-  // 顶层评论逻辑 - 直接插入
-  if (!parentId && !rootId) {
-    const comment = await db_client.comment.create({
-      data: {
-        projectId,
-        userId: authorUserId,
-        content,
-        parentId: null,
-        rootId: null,
-        replyToId: null
-      }
-    });
-
-    // 立即返回结果
-    const result = mapToCommentDTO(comment, authorUser, null);
-    
-    // 异步更新 rootId
-    setImmediate(async () => {
-      try {
-        await db_client.comment.update({
-          where: { id: comment.id },
-          data: { rootId: comment.id }
-        });
-      } catch (error) {
-        logger.error('异步更新 rootId 失败', error);
-      }
-    });
-
-    return result;
-  }
-
-  // 回复评论逻辑 - 优化验证
-  if (parentId && rootId) {
-    // 并行验证父评论和根评论，只查询必要字段
-    const [rootComment, parentComment] = await Promise.all([
-      db_client.comment.findUnique({ 
-        where: { id: rootId },
-        select: DB_SELECT_FIELDS.COMMENT_BASIC
-      }),
-      db_client.comment.findUnique({ 
-        where: { id: parentId },
-        select: DB_SELECT_FIELDS.COMMENT_BASIC
-      })
+    // 并行执行：项目验证 + 用户信息获取
+    const [projectExists, authorUser] = await Promise.all([
+      validateProjectFast(projectId),
+      fetchUserBrief(authorUserId)
     ]);
 
-    if (!rootComment || !parentComment) {
-      throw new Error('评论不存在');
-    }
-    
-    if (rootComment.projectId !== projectId || parentComment.projectId !== projectId) {
-      throw new Error('评论与项目不一致');
-    }
-    
-    if (rootComment.parentId !== null) {
-      throw new Error('rootId 必须是顶层评论');
+    if (!projectExists) {
+      throw new Error('项目不存在');
     }
 
-    // 获取被回复用户信息（非阻塞）
-    let replyToUser = null;
-    if (replyToId) {
-      setImmediate(async () => {
-        try {
-          const replyToComment = await db_client.comment.findUnique({ 
-            where: { id: replyToId },
-            select: { id: true, projectId: true, rootId: true, userId: true }
-          });
-          
-          if (replyToComment && 
-              replyToComment.projectId === projectId && 
-              replyToComment.rootId === rootId) {
-            replyToUser = await fetchUserBrief(replyToComment.userId);
-          }
-        } catch (error) {
-          logger.warn('获取被回复用户信息失败', error);
+    // 顶层评论逻辑
+    if (!parentId && !rootId) {
+      const comment = await db_client.comment.create({
+        data: {
+          projectId,
+          userId: authorUserId,
+          content,
+          parentId: null,
+          rootId: null,
+          replyToId: null
         }
       });
+
+      const result = mapToCommentDTO(comment, authorUser, null);
+      
+      // 异步更新 rootId（非阻塞）
+      setImmediate(async () => {
+        try {
+          await db_client.comment.update({
+            where: { id: comment.id },
+            data: { rootId: comment.id }
+          });
+        } catch (error) {
+          logger.error('异步更新 rootId 失败', error);
+        }
+      });
+
+      PerformanceMonitor.endTimer(timerId, 'createComment');
+      return result;
     }
 
-    const comment = await db_client.comment.create({
-      data: {
-        projectId,
-        userId: authorUserId,
-        content,
-        parentId,
-        rootId,
-        replyToId: replyToId || null
-      }
-    });
-
-    // 立即返回结果
-    const result = mapToCommentDTO(comment, authorUser, replyToUser);
-    
-    // 异步更新计数
-    setImmediate(async () => {
-      try {
-        await db_client.comment.update({
+    // 回复评论逻辑
+    if (parentId && rootId) {
+      // 并行验证评论
+      const [rootComment, parentComment] = await Promise.all([
+        db_client.comment.findUnique({ 
           where: { id: rootId },
-          data: { repliesCount: { increment: 1 } }
-        });
-      } catch (error) {
-        logger.error('异步更新回复计数失败', error);
+          select: { id: true, projectId: true, parentId: true }
+        }),
+        db_client.comment.findUnique({ 
+          where: { id: parentId },
+          select: { id: true, projectId: true }
+        })
+      ]);
+
+      if (!rootComment || !parentComment) {
+        throw new Error('评论不存在');
       }
-    });
+      
+      if (rootComment.projectId !== projectId || parentComment.projectId !== projectId) {
+        throw new Error('评论与项目不一致');
+      }
+      
+      if (rootComment.parentId !== null) {
+        throw new Error('rootId 必须是顶层评论');
+      }
 
-    return result;
+      const comment = await db_client.comment.create({
+        data: {
+          projectId,
+          userId: authorUserId,
+          content,
+          parentId,
+          rootId,
+          replyToId: replyToId || null
+        }
+      });
+
+      const result = mapToCommentDTO(comment, authorUser, null);
+      
+      // 异步更新计数（非阻塞）
+      setImmediate(async () => {
+        try {
+          await db_client.comment.update({
+            where: { id: rootId },
+            data: { repliesCount: { increment: 1 } }
+          });
+        } catch (error) {
+          logger.error('异步更新回复计数失败', error);
+        }
+      });
+
+      PerformanceMonitor.endTimer(timerId, 'createComment');
+      return result;
+    }
+
+    throw new Error('评论参数无效');
+  } catch (error) {
+    PerformanceMonitor.endTimer(timerId, 'createComment');
+    throw error;
   }
-
-  throw new Error('评论参数无效');
 }
 
 
-
-export async function listProjectThreadsService(
+/**
+ * 获取项目评论列表
+ */
+export async function listProjectCommentsService(
   projectId: string, 
-  query: ThreadsQuery
+  query: {
+    rootId: string | null,
+    page: number,
+    limit: number
+  }
 ) {
-  // TODO: 实现获取项目评论线程列表
-  throw new Error('未实现');
+  const { page, limit } = query;
+
+  // 计算分页偏移量
+  const skip = (page - 1) * limit;
+  
+  // 查询评论列表
+  const replies = await db_client.comment.findMany({
+    where: {
+      projectId
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    skip,
+    take: limit,
+    select: {
+      id: true,
+      projectId: true,
+      userId: true,
+      content: true,
+      parentId: true,
+      rootId: true,
+      replyToId: true,
+      likesCount: true,
+      dislikesCount: true,
+      repliesCount: true,
+      isDeleted: true,
+      deletedAt: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  });
+
+  // 获取用户信息
+  const userIds = [...new Set(replies.map(reply => reply.userId))];
+  const users = await db_client.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true, avatar: true }
+  });
+
+  // 将用户信息添加到回复列表中
+  const repliesWithUser = replies.map(reply => {
+    const user = users.find(u => u.id === reply.userId);
+    return {
+      ...reply,
+      user: user ? { id: user.id, name: user.name, avatar: user.avatar } : null
+    };
+  });
+
+  return repliesWithUser;
+  
 }
+
+
+/**
+ * 获取更多回复
+ */
+export async function listCommentRepliesService(
+  rootId: string, 
+  query: {
+    page: number,
+    limit: number
+  }
+) {
+  const { page, limit } = query;
+
+  // 计算分页偏移量
+  const skip = (page - 1) * limit;
+  
+  // 查询回复列表
+  const replies = await db_client.comment.findMany({ 
+    where: {
+      rootId, // 查询同一线程下的所有回复
+      isDeleted: false,
+      id: { not: rootId } // 排除根评论本身
+    },
+    orderBy: {
+      createdAt: 'asc', // 按时间正序，保持对话顺序
+    },
+    skip,
+    take: limit,
+    select: {
+      id: true,
+      projectId: true,
+      userId: true,
+      content: true,
+      parentId: true,
+      rootId: true,
+      replyToId: true,
+      likesCount: true,
+      dislikesCount: true,
+      repliesCount: true,
+      isDeleted: true,
+      deletedAt: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  });
+
+  // 获取用户信息
+  const userIds = [...new Set(replies.map(reply => reply.userId))];
+  const users = await db_client.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true, avatar: true }
+  });
+
+  // 将用户信息添加到回复列表中
+  const repliesWithUser = replies.map(reply => {
+    const user = users.find(u => u.id === reply.userId);
+    return {
+      ...reply,
+      user: user ? { id: user.id, name: user.name, avatar: user.avatar } : null
+    };
+  });
+
+  return repliesWithUser;
+}
+
 
 export async function listThreadRepliesService(
   rootId: string, 

@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
 import {
-  listProjectThreadsService,
-  listThreadRepliesService,
   createCommentService,
   upsertReactionService,
-  softDeleteCommentService
+  softDeleteCommentService,
+  listProjectCommentsService,
+  listCommentRepliesService
 } from '../services/comment/commentService';
 
 
@@ -45,51 +45,48 @@ export const postProjectComment = async (req: Request, res: Response) => {
 };
 
 
-// ======================= 获取项目评论线程列表 =========================
-export const getProjectCommentThreads = async (req: Request, res: Response) => {
-  const { projectId, limit = '20', cursor, repliesLimit = '3' } = req.query;
-  const currentUserId = req.user?.id ?? null;
+// ======================= 获取项目评论列表 =========================
+export const getProjectCommentList = async (req: Request, res: Response) => {
+  const { projectId, rootId = null, page = '1', limit = '10'} = req.query;
 
   if (!projectId) {
     return res.status(400).json({ code: 400, message: '缺少 projectId', data: null });
   }
 
-  const result = await listProjectThreadsService(projectId as string, {
+  const result = await listProjectCommentsService(projectId as string, {
+    rootId: rootId as string | null,
     limit: Number(limit),
-    cursor: (cursor as string) || undefined,
-    repliesLimit: Number(repliesLimit),
-    currentUserId: currentUserId as string | null
+    page: Number(page),
   });
 
   return res.status(200).json({
     code: 200,
-    message: '获取评论线程成功',
+    message: '获取项目评论列表成功',
     data: result
   });
-};
+}
 
-// ======================= 获取单线程更多回复 =========================
-export const getThreadReplies = async (req: Request, res: Response) => {
-  const { rootId, limit = '20', cursor, parentId } = req.query;
-  const currentUserId = req.user?.id ?? null;
+
+// ======================= 获取更多回复 =========================
+export const getCommentReplies = async (req: Request, res: Response) => {
+  const { rootId, page = '1', limit = '10' } = req.query;
 
   if (!rootId) {
     return res.status(400).json({ code: 400, message: '缺少 rootId', data: null });
   }
 
-  const result = await listThreadRepliesService(rootId as string, {
+  const result = await listCommentRepliesService(rootId as string, {
     limit: Number(limit),
-    cursor: (cursor as string) || undefined,
-    currentUserId: currentUserId as string | null,
-    parentId: (parentId as string) || undefined
+    page: Number(page),
   });
 
   return res.status(200).json({
     code: 200,
-    message: '获取线程回复成功',
+    message: '获取更多回复成功',
     data: result
   });
 };
+
 
 // ======================= 点赞/点踩（幂等 upsert） =========================
 export const putCommentReaction = async (req: Request, res: Response) => {
@@ -116,6 +113,7 @@ export const putCommentReaction = async (req: Request, res: Response) => {
     data: result
   });
 };
+
 
 // ======================= 软删除评论 =========================
 export const deleteComment = async (req: Request, res: Response) => {
