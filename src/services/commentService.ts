@@ -1,407 +1,221 @@
-import db_client from '../extensions/ext_db';
-import { supabaseAdmin } from '../extensions/ext_auth';
-import { generateRandomName } from '../utils/userUtils';
+import { supabaseAdmin } from "../extensions/ext_auth";
+import db_client from "../extensions/ext_db";
+import logger from "../extensions/ext_logger";
+import { 
+  CreateCommentPayload, 
+  CommentDTO, 
+  UserBriefDTO,
+  ThreadsQuery,
+  RepliesQuery
+} from "../interfaces/comment/commentType";
+import { generateRandomName } from "../utils/userUtils";
 
-// =============== 类型定义 ===============
-export interface ThreadsQuery {
-  limit: number;
-  cursor?: string; // 格式：createdAt|id
-  repliesLimit: number;
-  currentUserId: string | null;
-}
 
-export interface RepliesQuery {
-  limit: number;
-  cursor?: string; // 格式：createdAt|id
-  currentUserId: string | null;
-  parentId?: string; // 可选，仅展开某一直接父级
-}
-
-export interface CreateCommentPayload {
-  content: string;
-  parentId: string | null;
-  rootId: string | null;
-  replyUserId: string | null;
-}
-
-export interface UserBriefDTO {
-  id: string;
-  name: string | null;
-  avatar: string | null;
-}
-
-export interface CommentDTO {
-  id: string;
-  projectId: string;
-  user: UserBriefDTO;
-  content: string;
-  parentId: string | null;
-  rootId: string | null;
-  replyUser: UserBriefDTO | null;
-  likesCount: number;
-  dislikesCount: number;
-  repliesCount: number;
-  isDeleted: boolean;
-  deletedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-  myReaction: 'LIKE' | 'DISLIKE' | null;
-}
-
-export interface ThreadItemDTO {
-  root: CommentDTO;
-  replies: CommentDTO[];
-  hasMoreReplies: boolean;
-}
-
-// =============== 工具函数 ===============
-function parseCursor(cursor?: string): { createdAt: Date; id: string } | null {
-  if (!cursor) return null;
-  const [createdAtStr, id] = cursor.split('|');
-  if (!createdAtStr || !id) return null;
-  const createdAt = new Date(createdAtStr);
-  if (isNaN(createdAt.getTime())) return null;
-  return { createdAt, id };
-}
-
-function buildCursorFromRow(row: { createdAt: Date; id: string } | null): string | null {
-  if (!row) return null;
-  return `${row.createdAt.toISOString()}|${row.id}`;
-}
-
-async function fetchUsersBrief(userIds: string[]): Promise<Record<string, UserBriefDTO>> {
-  const uniqueIds = Array.from(new Set(userIds.filter(Boolean)));
-  if (uniqueIds.length === 0) return {};
-
-  const result: Record<string, UserBriefDTO> = {};
-
-  await Promise.all(
-    uniqueIds.map(async (uid) => {
-      try {
-        const { data, error } = await supabaseAdmin.auth.admin.getUserById(uid);
-        if (!error && data && (data.user as any)) {
-          const user: any = (data.user as any);
-
-          // console.log('user', user)
-
-          const metadata = user.user_metadata || {};
-          
-          // 优先使用用户设置的名称，如果没有则生成随机名称
-          let displayName = metadata.display_name || metadata.full_name;
-          if (!displayName) {
-            displayName = generateRandomName(uid);
-          }
-          
-          // 优先使用用户设置的头像，如果没有则生成 Multiavatar
-          let avatar = metadata.avatar_url || metadata.avatar;
-          if (!avatar) {
-            avatar = `https://api.multiavatar.com/${uid}.svg`;
-          }
-          
-          result[uid] = {
-            id: uid,
-            name: displayName,
-            avatar: avatar,
-          };
-        } else {
-          // 即使获取用户信息失败，也生成一个随机名称和头像
-          result[uid] = { 
-            id: uid, 
-            name: generateRandomName(uid), 
-            avatar: `https://api.multiavatar.com/${uid}.svg`
-          };
-        }
-      } catch {
-        // 异常情况下也生成随机名称和头像
-        result[uid] = { 
-          id: uid, 
-          name: generateRandomName(uid), 
-          avatar: `https://api.multiavatar.com/${uid}.svg`
-        };
-      }
-    })
-  );
-
-  return result;
-}
-
-async function getMyReactionsMap(commentIds: string[], currentUserId: string | null): Promise<Record<string, 'LIKE' | 'DISLIKE' | null>> {
-  const map: Record<string, 'LIKE' | 'DISLIKE' | null> = {};
-  if (!currentUserId || commentIds.length === 0) return map;
-
-  const reactions = await (db_client as any).commentReaction.findMany({
-    where: { userId: currentUserId, commentId: { in: Array.from(new Set(commentIds)) } },
-    select: { commentId: true, type: true }
-  });
-
-  for (const r of reactions) {
-    map[r.commentId] = r.type as 'LIKE' | 'DISLIKE';
+/**
+ * 获取用户简要信息
+ * @param userId 用户ID
+ */
+async function fetchUserBrief(userId: string): Promise<UserBriefDTO> {
+  // supabase 获取用户信息
+  try {
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (error) {
+      throw new Error('获取用户信息失败');
+    }
+    const user = data.user;
+    return {
+      id: user.id,
+      name: user.user_metadata.display_name,
+      avatar: user.user_metadata.avatar
+    };
+  } catch (error) {
+    logger.error('获取用户信息失败, 直接返回', error);
+    return {
+      id: userId,
+      name: generateRandomName(userId),
+      avatar: `https://api.multiavatar.com/${userId}.svg`
+    };
   }
-  return map;
 }
-
-function mapToDTO(
-  c: any,
-  users: Record<string, UserBriefDTO>,
-  myReactions: Record<string, 'LIKE' | 'DISLIKE' | null>
+/**
+ * 将数据库评论对象转换为DTO
+ * @param comment 数据库评论对象
+ * @param user 用户信息
+ * @param replyUser 被回复用户信息
+ */
+function mapToCommentDTO(
+  comment: any,
+  user: UserBriefDTO,
+  replyUser: UserBriefDTO | null
 ): CommentDTO {
   return {
-    id: c.id,
-    projectId: c.projectId,
-    user: users[c.userId] || { id: c.userId, name: null, avatar: null },
-    content: c.content,
-    parentId: c.parentId,
-    rootId: c.rootId,
-    replyUser: c.replyUserId ? (users[c.replyUserId] || { id: c.replyUserId, name: null, avatar: null }) : null,
-    likesCount: c.likesCount ?? c.likes ?? 0,
-    dislikesCount: c.dislikesCount ?? c.dislikes ?? 0,
-    repliesCount: c.repliesCount ?? c.replyCount ?? 0,
-    isDeleted: Boolean(c.isDeleted),
-    deletedAt: c.deletedAt ?? null,
-    createdAt: c.createdAt,
-    updatedAt: c.updatedAt,
-    myReaction: myReactions[c.id] ?? null,
+    id: comment.id,
+    projectId: comment.projectId,
+    user,
+    content: comment.content,
+    parentId: comment.parentId,
+    rootId: comment.rootId,
+    replyUser,
+    likesCount: comment.likesCount || 0,
+    dislikesCount: comment.dislikesCount || 0,
+    repliesCount: comment.repliesCount || 0,
+    isDeleted: comment.isDeleted || false,
+    deletedAt: comment.deletedAt,
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt
   };
 }
 
-// =============== 服务方法实现 ===============
-export async function listProjectThreadsService(projectId: string, query: ThreadsQuery): Promise<{ items: ThreadItemDTO[]; cursor: string | null; hasMore: boolean }>
-{
-  const { limit, cursor, repliesLimit, currentUserId } = query;
-  const cursorObj = parseCursor(cursor);
 
-  const whereTop: any = { projectId, parentId: null };
-  // 顶层按 createdAt desc 游标分页
-  if (cursorObj) {
-    (whereTop as any).OR = [
-      { createdAt: { lt: cursorObj.createdAt } },
-      { createdAt: cursorObj.createdAt, id: { lt: cursorObj.id } }
-    ];
-  }
-
-  const topList: any[] = await (db_client.comment as any).findMany({
-    where: whereTop,
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: limit + 1
-  });
-
-  const hasMore = topList.length > limit;
-  const slicedTop = hasMore ? topList.slice(0, limit) : topList;
-
-  // 批量取每个 root 的直接子回复（按 createdAt asc）
-  const rootIds = slicedTop.map(c => c.id);
-  const replies: any[] = await (db_client.comment as any).findMany({
-    where: { rootId: { in: rootIds }, parentId: { in: rootIds } },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
-  });
-
-  // 组装每个 root 的 replies 截断
-  const rootIdToReplies: Record<string, any[]> = {};
-  for (const r of replies) {
-    if (!rootIdToReplies[r.rootId!]) rootIdToReplies[r.rootId!] = [];
-    rootIdToReplies[r.rootId!].push(r);
-  }
-
-  // 收集需要的用户 id
-  const userIds: string[] = [];
-  for (const root of slicedTop) {
-    userIds.push(root.userId);
-    if (root.replyUserId) userIds.push(root.replyUserId);
-    const list = (rootIdToReplies[root.id] || []).slice(0, repliesLimit);
-    for (const r of list) {
-      userIds.push(r.userId);
-      if (r.replyUserId) userIds.push(r.replyUserId);
-    }
-  }
-
-  const usersMap = await fetchUsersBrief(userIds);
-  const myReactionsMap = await getMyReactionsMap(
-    [...slicedTop.map(c => c.id), ...replies.map(r => r.id)],
-    currentUserId
-  );
-
-  const items: ThreadItemDTO[] = slicedTop.map((root) => {
-    const fullReplies = rootIdToReplies[root.id] || [];
-    const partialReplies = fullReplies.slice(0, repliesLimit);
-    return {
-      root: mapToDTO(root, usersMap, myReactionsMap),
-      replies: partialReplies.map(r => mapToDTO(r, usersMap, myReactionsMap)),
-      hasMoreReplies: (root.repliesCount ?? root.replyCount ?? 0) > partialReplies.length
-    };
-  });
-
-  const nextCursor = buildCursorFromRow(slicedTop.length > 0 ? slicedTop[slicedTop.length - 1] : null);
-
-  return { items, cursor: nextCursor, hasMore };
-}
-
-export async function listThreadRepliesService(rootId: string, query: RepliesQuery): Promise<{ rootId: string; replies: CommentDTO[]; cursor: string | null; hasMore: boolean }>
-{
-  const { limit, cursor, currentUserId, parentId } = query;
-  const cursorObj = parseCursor(cursor);
-
-  const where: any = { rootId };
-  if (parentId) where.parentId = parentId; else where.parentId = rootId; // 默认仅返回直接子级
-
-  if (cursorObj) {
-    // 升序分页：大于游标
-    (where as any).OR = [
-      { createdAt: { gt: cursorObj.createdAt } },
-      { createdAt: cursorObj.createdAt, id: { gt: cursorObj.id } }
-    ];
-  }
-
-  const list: any[] = await (db_client.comment as any).findMany({
-    where,
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    take: limit + 1
-  });
-
-  const hasMore = list.length > limit;
-  const sliced = hasMore ? list.slice(0, limit) : list;
-
-  const userIds: string[] = [];
-  for (const c of sliced) {
-    userIds.push(c.userId);
-    if (c.replyUserId) userIds.push(c.replyUserId);
-  }
-
-  const usersMap = await fetchUsersBrief(userIds);
-  const myReactionsMap = await getMyReactionsMap(sliced.map(c => c.id), currentUserId);
-
-  const repliesDTO = sliced.map((c) => mapToDTO(c, usersMap, myReactionsMap));
-  const nextCursor = buildCursorFromRow(sliced.length > 0 ? sliced[sliced.length - 1] : null);
-
-  return { rootId, replies: repliesDTO, cursor: nextCursor, hasMore };
-}
-
+/**
+ * 创建评论
+ * @param projectId 项目ID
+ * @param authorUserId 作者用户ID
+ * @param payload 评论内容
+ */
 export async function createCommentService(
   projectId: string,
   authorUserId: string,
   payload: CreateCommentPayload
 ): Promise<CommentDTO> {
-  const { content, parentId, rootId, replyUserId } = payload;
+  const { content, parentId, rootId, replyToId } = payload;
 
-  // 顶层评论
+  // 验证项目是否存在
+  const project = await db_client.project.findUnique({ where: { id: projectId } });
+  if (!project) {
+    throw new Error('项目不存在');
+  }
+
+  // 顶层评论逻辑
   if (!parentId && !rootId) {
-    const created: any = await (db_client as any).$transaction(async (tx: any) => {
-      const c = await tx.comment.create({
+    const created = await db_client.$transaction(async (tx) => {
+      // 1. 创建评论记录
+      const comment = await tx.comment.create({
         data: {
           projectId,
           userId: authorUserId,
           content,
           parentId: null,
           rootId: null,
-          replyUserId: null
+          replyToId: null
         }
       });
-      const updated = await tx.comment.update({ where: { id: c.id }, data: { rootId: c.id } });
+
+      // 2. 更新 rootId 为自己的 id
+      const updated = await tx.comment.update({
+        where: { id: comment.id },
+        data: { rootId: comment.id }
+      });
+
       return updated;
     });
 
-    const usersMap = await fetchUsersBrief([created.userId]);
-    return mapToDTO(created, usersMap, {});
+    // 3. 获取用户信息并返回DTO
+    const user = await fetchUserBrief(created.userId);
+    return mapToCommentDTO(created, user, null);
   }
 
-  // 回复评论：需要校验 rootId 与 parentId
-  if (!rootId || !parentId) {
-    throw new Error('回复评论需要同时提供 rootId 与 parentId');
-  }
+  // 回复评论逻辑
+  if (parentId && rootId) {
+    // 验证父评论和根评论
+    const [rootComment, parentComment] = await Promise.all([
+      db_client.comment.findUnique({ where: { id: rootId } }),
+      db_client.comment.findUnique({ where: { id: parentId } })
+    ]);
 
-  const [root, parent] = await Promise.all([
-    (db_client.comment as any).findUnique({ where: { id: rootId } }),
-    (db_client.comment as any).findUnique({ where: { id: parentId } }),
-  ]);
+    if (!rootComment) {
+      throw new Error('rootId 无效');
+    }
+    if (!parentComment) {
+      throw new Error('parentId 无效');
+    }
+    if (rootComment.projectId !== projectId || parentComment.projectId !== projectId) {
+      throw new Error('root/parent 与项目不一致');
+    }
+    if (rootComment.parentId !== null) {
+      throw new Error('rootId 必须是顶层评论');
+    }
 
-  if (!root) throw new Error('rootId 无效');
-  if (!parent) throw new Error('parentId 无效');
-  if (root.projectId !== projectId || parent.projectId !== projectId) throw new Error('root/parent 与项目不一致');
-  if (root.parentId !== null) throw new Error('rootId 必须是顶层评论');
-
-  const created: any = await (db_client as any).$transaction(async (tx: any) => {
-    const c = await tx.comment.create({
-      data: {
-        projectId,
-        userId: authorUserId,
-        content,
-        parentId,
-        rootId,
-        replyUserId: replyUserId || null
+    // 验证 replyToId（如果提供）
+    let replyToComment = null;
+    let replyToUser = null;
+    
+    if (replyToId) {
+      replyToComment = await db_client.comment.findUnique({ where: { id: replyToId } });
+      if (!replyToComment) {
+        throw new Error('replyToId 无效');
       }
+      if (replyToComment.projectId !== projectId || replyToComment.rootId !== rootId) {
+        throw new Error('replyToId 与项目或线程不一致');
+      }
+      // 获取被回复评论的用户信息
+      replyToUser = await fetchUserBrief(replyToComment.userId);
+    }
+
+    const created = await db_client.$transaction(async (tx) => {
+      // 1. 创建回复评论
+      const comment = await tx.comment.create({
+        data: {
+          projectId,
+          userId: authorUserId,
+          content,
+          parentId,
+          rootId,
+          replyToId: replyToId || null
+        }
+      });
+
+      // 2. 递增根评论的回复计数（整个线程的回复总数）
+      await tx.comment.update({
+        where: { id: rootId },
+        data: { repliesCount: { increment: 1 } }
+      });
+
+      // 注意：不再递增直接父评论的 repliesCount
+      // 因为 repliesCount 表示整个线程的回复数量，不是直接回复数量
+
+      return comment;
     });
 
-    // 递增父链与根的回复计数
-    await tx.comment.update({ where: { id: parentId }, data: { repliesCount: { increment: 1 } } });
-    await tx.comment.update({ where: { id: rootId }, data: { repliesCount: { increment: 1 } } });
+    // 4. 获取用户信息并返回DTO
+    const author = await fetchUserBrief(created.userId);
+    return mapToCommentDTO(created, author, replyToUser);
+  }
 
-    return c;
-  });
+  throw new Error('评论参数无效：顶级评论不能指定 parentId/rootId，回复评论必须同时提供 parentId 和 rootId');
+}
 
-  const usersMap = await fetchUsersBrief([created.userId, created.replyUserId || ''].filter(Boolean) as string[]);
-  return mapToDTO(created, usersMap, {});
+
+
+export async function listProjectThreadsService(
+  projectId: string, 
+  query: ThreadsQuery
+) {
+  // TODO: 实现获取项目评论线程列表
+  throw new Error('未实现');
+}
+
+export async function listThreadRepliesService(
+  rootId: string, 
+  query: RepliesQuery
+) {
+  // TODO: 实现获取线程回复列表
+  throw new Error('未实现');
 }
 
 export async function upsertReactionService(
   commentId: string,
   userId: string,
   type: 'LIKE' | 'DISLIKE' | null
-): Promise<{ commentId: string; likesCount: number; dislikesCount: number; myReaction: 'LIKE' | 'DISLIKE' | null }>
-{
-  const result = await (db_client as any).$transaction(async (tx: any) => {
-    const existed = await tx.commentReaction.findFirst({ where: { commentId, userId } });
-
-    if (type === null) {
-      if (existed) {
-        await tx.commentReaction.delete({ where: { id: existed.id } });
-        if (existed.type === 'LIKE') {
-          await tx.comment.update({ where: { id: commentId }, data: { likesCount: { decrement: 1 } } });
-        } else {
-          await tx.comment.update({ where: { id: commentId }, data: { dislikesCount: { decrement: 1 } } });
-        }
-      }
-    } else {
-      if (!existed) {
-        await tx.commentReaction.create({ data: { commentId, userId, type } });
-        if (type === 'LIKE') {
-          await tx.comment.update({ where: { id: commentId }, data: { likesCount: { increment: 1 } } });
-        } else {
-          await tx.comment.update({ where: { id: commentId }, data: { dislikesCount: { increment: 1 } } });
-        }
-      } else if (existed.type !== type) {
-        // 切换类型
-        await tx.commentReaction.update({ where: { id: existed.id }, data: { type } });
-        if (existed.type === 'LIKE') {
-          await tx.comment.update({ where: { id: commentId }, data: { likesCount: { decrement: 1 } } });
-          await tx.comment.update({ where: { id: commentId }, data: { dislikesCount: { increment: 1 } } });
-        } else {
-          await tx.comment.update({ where: { id: commentId }, data: { dislikesCount: { decrement: 1 } } });
-          await tx.comment.update({ where: { id: commentId }, data: { likesCount: { increment: 1 } } });
-        }
-      } // else 相同类型，无变化
-    }
-
-    const updated = await tx.comment.findUniqueOrThrow({ where: { id: commentId }, select: { id: true, likesCount: true, dislikesCount: true } });
-    return updated;
-  });
-
-  return { commentId: result.id, likesCount: result.likesCount, dislikesCount: result.dislikesCount, myReaction: type };
+) {
+  // TODO: 实现点赞/点踩功能
+  throw new Error('未实现');
 }
 
 export async function softDeleteCommentService(
   commentId: string,
   userId: string
-): Promise<{ commentId: string; isDeleted: boolean; deletedAt: string }>
-{
-  const comment: any = await (db_client.comment as any).findUnique({ where: { id: commentId } });
-  if (!comment) {
-    throw new Error('评论不存在');
-  }
-  if (comment.userId !== userId) {
-    throw new Error('无权删除该评论');
-  }
-
-  const deletedAt = new Date();
-  await (db_client.comment as any).update({ where: { id: commentId }, data: { isDeleted: true, deletedAt } });
-
-  return { commentId, isDeleted: true, deletedAt: deletedAt.toISOString() };
+) {
+  // TODO: 实现软删除评论功能
+  throw new Error('未实现');
 }

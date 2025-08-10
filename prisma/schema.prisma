@@ -50,7 +50,7 @@ model Comment {
   // 树形关系
   parentId      String?                            // 直接父评论
   rootId        String?                            // 线程顶层评论（顶层可等于自身或置空，推荐等于自身）
-  replyUserId   String?  @db.Uuid                  // @ 的目标用户
+  replyToId     String?  @db.Uuid                  // @ 的目标评论
 
   // 冗余计数（可选：用作高频读缓存）
   likesCount    Int      @default(0)
