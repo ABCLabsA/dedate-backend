@@ -5,7 +5,7 @@ import {
   createCommentService,
   upsertReactionService,
   softDeleteCommentService
-} from '../services/commentService';
+} from '../services/comment/commentService';
 
 
 // ======================= 创建评论/回复 =========================
