@@ -38,3 +38,55 @@ model TeamMember {
   email     String   // 团队成员邮箱
   role      String   // 团队成员角色
 }
+
+
+/// 核心评论表
+model Comment {
+  id            String   @id @default(uuid())
+  projectId     String                             // 关联项目
+  userId        String   @db.Uuid                  // Supabase 用户 UUID
+  content       String   @db.Text
+
+  // 树形关系
+  parentId      String?                            // 直接父评论
+  rootId        String?                            // 线程顶层评论（顶层可等于自身或置空，推荐等于自身）
+  replyUserId   String?  @db.Uuid                  // @ 的目标用户
+
+  // 冗余计数（可选：用作高频读缓存）
+  likesCount    Int      @default(0)
+  dislikesCount Int      @default(0)
+  repliesCount  Int      @default(0)
+
+  // 软删除
+  isDeleted     Boolean  @default(false)
+  deletedAt     DateTime?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([parentId])
+  @@index([rootId, createdAt])
+  @@index([projectId, rootId, createdAt]) // 按线程分页/折叠
+}
+
+
+/// 枚举类型
+enum ReactionType {
+  LIKE
+  DISLIKE
+}
+
+
+/// 互动（点赞/点踩等）
+model CommentReaction {
+  id        String       @id @default(cuid())
+  commentId String
+  userId    String       @db.Uuid
+  type      ReactionType
+  createdAt DateTime     @default(now())
+
+  @@unique([commentId, userId, type]) // 防重复
+  @@index([userId])
+  @@index([commentId, type])
+}

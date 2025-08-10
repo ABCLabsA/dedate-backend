@@ -1,5 +1,7 @@
 import { ServiceError } from "../errors/ServiceError";
 import supabase, { supabaseAdmin } from "../extensions/ext_auth";
+import logger from "../extensions/ext_logger";
+import { generateRandomName } from "../utils/userUtils";
 
 /**
  * 统一的注册/登录服务
@@ -31,6 +33,41 @@ export const authRegisterLoginService = async (email: string, password: string) 
 
     // 如果登录成功，说明用户已存在且密码正确
     if (loginData.user && !loginError) {
+      // 登录成功后，检查并更新用户元数据
+      try {
+        const user = loginData.user;
+        const metadata = user.user_metadata || {};
+        
+        // 检查是否需要更新用户元数据
+        let needsUpdate = false;
+        const updateData: any = {};
+        
+        // 检查是否已经有 display_name
+        if (!metadata.display_name) {
+          const randomName = generateRandomName(user.id);
+          updateData.display_name = randomName;
+          needsUpdate = true;
+          logger.info(`为用户 ${user.id} 生成了新的显示名称: ${randomName}`);
+        }
+        
+        // 检查是否已经有 avatar
+        if (!metadata.avatar) {
+          updateData.avatar = `https://api.multiavatar.com/${user.id}.svg`;
+          needsUpdate = true;
+          logger.info(`为用户 ${user.id} 生成了新的头像`);
+        }
+        
+        // 如果有需要更新的数据，则更新用户元数据
+        if (needsUpdate) {
+          await supabase.auth.updateUser({
+            data: updateData
+          });
+        }
+      } catch (updateError) {
+        // 即使更新元数据失败，也不影响登录流程
+        logger.error('更新用户元数据失败:', updateError);
+      }
+
       return {
         code: 200,
         message: "登录成功",

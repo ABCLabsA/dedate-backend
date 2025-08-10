@@ -2,12 +2,14 @@ import express from 'express';
 import baseInfoRouter from './base-info';
 import searchProjectInfoRouter from './search';
 import authRouter from './auth';
+import commentRouter from './comment';
 
 const router = express.Router();
 
 router.use('/base-info', baseInfoRouter);
 router.use('/search', searchProjectInfoRouter);
 router.use('/auth', authRouter)
+router.use('/comment', commentRouter)
 
 
 router.get('/', (req, res) => {

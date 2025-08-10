@@ -4,8 +4,8 @@ import db_client from "../extensions/ext_db";
 
 export const getBaseInfoListService = async (page: number = 1, pageSize: number = 10) => {
     try {
-        console.log("page", page)
-        console.log("pageSize", pageSize)
+        // console.log("page", page)
+        // console.log("pageSize", pageSize)
         const skip = (page - 1) * pageSize;
         const [list, total] = await Promise.all([
             db_client.project.findMany({
