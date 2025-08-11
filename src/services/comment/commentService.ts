@@ -318,9 +318,10 @@ export async function listProjectCommentsService(
       projectId,
       parentId: null,
     },
-    orderBy: {
-      createdAt: 'desc',
-    },
+    orderBy: [
+      { likesCount: 'desc' },
+      { createdAt: 'desc' },
+    ],
     skip,
     take: limit,
     select: {
@@ -384,9 +385,10 @@ export async function listCommentRepliesService(
       isDeleted: false,
       id: { not: rootId } // 排除根评论本身
     },
-    orderBy: {
-      createdAt: 'asc', // 按时间正序，保持对话顺序
-    },
+    orderBy: [
+      { likesCount: 'desc' },
+      { createdAt: 'desc' },
+    ],
     skip,
     take: limit,
     select: {
