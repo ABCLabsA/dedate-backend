@@ -1,7 +1,7 @@
 import { ServiceError } from "../errors/ServiceError";
 import supabase, { supabaseAdmin } from "../extensions/ext_auth";
 import logger from "../extensions/ext_logger";
-import { generateRandomName } from "../utils/userUtils";
+import { generateRandomName, getRandomBackgroundColors } from "../utils/userUtils";
 import db_client from "../extensions/ext_db";
 
 /**
@@ -49,14 +49,14 @@ export const authRegisterLoginService = async (email: string, password: string) 
             update: {
               email: user.email || '',
               name: generateRandomName(user.id),
-              avatar: `https://api.multiavatar.com/${user.id}.svg`,
+              avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${user.id}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`,
               updatedAt: new Date()
             },
             create: {
               id: user.id,
               email: user.email || '',
               name: generateRandomName(user.id),
-              avatar: `https://api.multiavatar.com/${user.id}.svg`
+              avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${user.id}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`
             }
           });
           logger.info(`用户信息已同步到本地数据库: ${user.id}`);

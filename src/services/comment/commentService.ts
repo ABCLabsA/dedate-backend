@@ -6,7 +6,7 @@ import {
   UserBriefDTO,
   RepliesQuery
 } from "../../interfaces/comment/commentType";
-import { generateRandomName } from "../../utils/userUtils";
+import { generateRandomName, getRandomBackgroundColors } from "../../utils/userUtils";
 import { PerformanceMonitor } from "../../utils/performanceMonitor";
 
 // 内存缓存（避免Redis网络延迟）
@@ -51,7 +51,7 @@ async function fetchUserBrief(userId: string): Promise<UserBriefDTO> {
     const fallbackUser = {
       id: userId,
       name: generateRandomName(userId),
-      avatar: `https://api.multiavatar.com/${userId}.svg`
+      avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${userId}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`
     };
     
     // 缓存fallback信息
@@ -99,7 +99,7 @@ async function fetchUsersBatch(userIds: string[]): Promise<Map<string, UserBrief
           const fallbackUser = {
             id: userId,
             name: generateRandomName(userId),
-            avatar: `https://api.multiavatar.com/${userId}.svg`
+            avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${userId}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`
           };
           result.set(userId, fallbackUser);
           memoryCache.users.set(userId, { data: fallbackUser, timestamp: now });
@@ -114,7 +114,7 @@ async function fetchUsersBatch(userIds: string[]): Promise<Map<string, UserBrief
           const fallbackUser = {
             id: userId,
             name: generateRandomName(userId),
-            avatar: `https://api.multiavatar.com/${userId}.svg`
+            avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${userId}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`
           };
           result.set(userId, fallbackUser);
           memoryCache.users.set(userId, { data: fallbackUser, timestamp: now });
@@ -315,7 +315,8 @@ export async function listProjectCommentsService(
   // 查询评论列表
   const replies = await db_client.comment.findMany({
     where: {
-      projectId
+      projectId,
+      parentId: null,
     },
     orderBy: {
       createdAt: 'desc',

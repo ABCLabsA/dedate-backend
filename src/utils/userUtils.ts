@@ -39,3 +39,18 @@ export function generateRandomName(userId: string): string {
   
   return `${adjectives[adjIndex]}${nouns[nounIndex]}${numberSuffix}`;
 } 
+
+/**
+ * 生成随机的背景色组合
+ * 用于Dicebear头像API的背景色参数
+ */
+export function getRandomBackgroundColors(): string {
+  const colors = [
+    'ff6b6b', '4ecdc4', '45b7d1', 'f9ca24', 'f0932b', '6c5ce7', 
+    'a29bfe', 'fd79a8', '00b894', '00cec9', '74b9ff', '0984e3',
+    '55a3ff', 'fd79a8', 'ff7675', 'fd79a8', '74b9ff', '55a3ff'
+  ];
+  // 随机选择3-5个颜色
+  const selectedColors = colors.sort(() => 0.5 - Math.random()).slice(0, 3 + Math.floor(Math.random() * 3));
+  return selectedColors.join(',');
+} 
