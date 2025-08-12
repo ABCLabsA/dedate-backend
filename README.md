@@ -1,3 +1,8 @@
+# 复制
+```
+cp .env.example .env
+```
+
 # 生成客户端
 ```bash
 npx prisma generate
