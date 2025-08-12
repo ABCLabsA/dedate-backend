@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import {
   createCommentService,
   upsertReactionService,
+  getMyLikedCommentIdsService,
   softDeleteCommentService,
   listProjectCommentsService,
   listCommentRepliesService
@@ -91,7 +92,8 @@ export const getCommentReplies = async (req: Request, res: Response) => {
 // ======================= 点赞/点踩（幂等 upsert） =========================
 export const putCommentReaction = async (req: Request, res: Response) => {
   const { commentId } = req.params;
-  const { type } = req.body as { type: 'LIKE' | 'DISLIKE' | null };
+  // 现在仅允许 LIKE 与取消（null）
+  const { type } = req.body as { type: 'LIKE' | null };
 
   if (!req.user) {
     return res.status(401).json({ code: 401, message: '需要登录', data: null });
@@ -101,7 +103,7 @@ export const putCommentReaction = async (req: Request, res: Response) => {
     return res.status(400).json({ code: 400, message: '缺少 commentId', data: null });
   }
 
-  if (type !== 'LIKE' && type !== 'DISLIKE' && type !== null) {
+  if (type !== 'LIKE' && type !== null) {
     return res.status(400).json({ code: 400, message: '非法的 type 参数', data: null });
   }
 
@@ -110,6 +112,18 @@ export const putCommentReaction = async (req: Request, res: Response) => {
   return res.status(200).json({
     code: 200,
     message: '更新互动状态成功',
+    data: result
+  });
+};
+
+
+// ======================= 查询我点赞过的评论ID =========================
+export const getMyLikedCommentIds = async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  const result = await getMyLikedCommentIdsService(userId);
+  return res.status(200).json({
+    code: 200,
+    message: '查询我点赞过的评论ID成功',
     data: result
   });
 };

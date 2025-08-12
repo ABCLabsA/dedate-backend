@@ -8,6 +8,8 @@ import {
 } from "../../interfaces/comment/commentType";
 import { generateRandomName, getRandomBackgroundColors } from "../../utils/userUtils";
 import { PerformanceMonitor } from "../../utils/performanceMonitor";
+import { ReactionType } from "@prisma/client";
+import { ServiceError } from "../../errors/ServiceError";
 
 // 内存缓存（避免Redis网络延迟）
 const memoryCache = {
@@ -429,22 +431,105 @@ export async function listCommentRepliesService(
 }
 
 
-export async function listThreadRepliesService(
-  rootId: string, 
-  query: RepliesQuery
-) {
-  // TODO: 实现获取线程回复列表
-  throw new Error('未实现');
-}
 
+/**
+ * 点赞/取消点赞
+ */
 export async function upsertReactionService(
   commentId: string,
   userId: string,
-  type: 'LIKE' | 'DISLIKE' | null
+  type: 'LIKE' | null
 ) {
-  // TODO: 实现点赞/点踩功能
-  throw new Error('未实现');
+  // 检查评论是否存在
+  const comment = await db_client.comment.findUnique({
+    where: { id: commentId }
+  });
+
+  if (!comment) {
+    throw new Error('评论不存在');
+  }
+
+  // 检查用户是否已经点赞过
+  const existingReaction = await db_client.commentReaction.findUnique({
+    where: {
+      commentId_userId_type: {
+        commentId,
+        userId,
+        type: ReactionType.LIKE
+      }
+    }
+  });
+
+  if (type === 'LIKE') {
+    // 如果已经点赞过，返回错误
+    if (existingReaction) {
+      throw new ServiceError('用户已经点赞过该评论', 200, 1001);
+    }
+    
+    // 创建点赞记录
+    await db_client.commentReaction.create({
+      data: { commentId, userId, type: ReactionType.LIKE }
+    });
+    
+    // 增加点赞数
+    const updatedComment = await db_client.comment.update({
+      where: { id: commentId },
+      data: { likesCount: { increment: 1 } }
+    });
+
+    return {
+      likesCount: updatedComment.likesCount,
+      message: '点赞成功'
+    };
+  } else {
+    // 如果没有点赞过，返回错误
+    if (!existingReaction) {
+      throw new Error('用户未点赞过该评论');
+    }
+    
+    // 删除点赞记录
+    await db_client.commentReaction.delete({
+      where: {
+        commentId_userId_type: {
+          commentId,
+          userId,
+          type: ReactionType.LIKE
+        }
+      }
+    });
+    
+    // 减少点赞数
+    const updatedComment = await db_client.comment.update({
+      where: { id: commentId },
+      data: { likesCount: { decrement: 1 } }
+    });
+
+    return {
+      likesCount: updatedComment.likesCount,
+      message: '取消点赞成功'
+    };
+  }
 }
+
+
+/**
+ * 批量查询当前用户对指定评论是否点过赞
+ */
+export async function getMyLikedCommentIdsService(
+  userId: string
+): Promise<string[]> {
+  const rows = await db_client.commentReaction.findMany({
+    where: {
+      userId,
+      type: ReactionType.LIKE
+    },
+    select: { commentId: true }
+  });
+
+  return rows.map(r => r.commentId);
+}
+
+
 
 export async function softDeleteCommentService(
   commentId: string,
