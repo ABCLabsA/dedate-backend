@@ -200,3 +200,41 @@ export const refreshTokenService = async (refresh_token: string) => {
 };
 
 
+/**
+ * 获取用户信息
+ */
+export const getUserInfoService = async (userId: string, email: string) => {
+  const user = await db_client.user.findUnique({
+    where: { id: userId }
+  });
+
+  if (!user) {
+    // 同步信息到数据库里面
+    await db_client.user.upsert({
+      where: { id: userId },
+      update: {
+        email: email || '',
+        name: generateRandomName(userId),
+        avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${userId}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`,
+        updatedAt: new Date()
+      },
+      create: {
+        id: userId,
+        email: email || '',
+        name: generateRandomName(userId),
+        avatar: `https://api.dicebear.com/9.x/adventurer/svg?seed=${userId}&&flip=true&&backgroundColor=${getRandomBackgroundColors()}`
+      }
+    });
+  }
+
+  const userInfo = await db_client.user.findUnique({
+    where: { id: userId }
+  });
+
+  // 返回用户信息
+  return {
+    id: userInfo?.id,
+    name: userInfo?.name,
+    avatar: userInfo?.avatar
+  };
+};

@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import supabase from "../extensions/ext_auth"
-import { authRegisterLoginService, refreshTokenService } from "../services/authService";
+import { authRegisterLoginService, getUserInfoService, refreshTokenService } from "../services/authService";
 
 
 /**
@@ -30,6 +30,30 @@ export const refreshToken = async (req: Request, res: Response) => {
     const result = await refreshTokenService(refresh_token);
     
     return res.status(200).json(result);
+};
+
+
+/**
+ * 获取用户信息
+ */
+export const getUserInfo = async (req: Request, res: Response) => {
+  const user = req.user;
+
+  if (!user) {
+    return res.status(401).json({
+      code: 401,
+      message: "用户未登录",
+      data: null
+    });
+  }
+
+  const userInfo = await getUserInfoService(user.id, user.email);
+
+  return res.status(200).json({
+    code: 200,
+    message: "获取用户信息成功",
+    data: userInfo
+  });
 };
 
 
